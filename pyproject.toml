@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prcost"
+version = "0.2.0"
+description = "Estimate and reduce the review cost of a pull request"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+prcost = "prcost.cli:run"
+
+[tool.setuptools]
+packages = ["prcost"]
