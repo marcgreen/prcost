@@ -7,11 +7,12 @@ only this folder and access to the repository. Nothing here depends on the conve
 
 | Path | What it is |
 | --- | --- |
-| `SPEC.md` | The model: targets, signals, formulas, priors, Cynefin rules, split logic, risks. Start here for the why. |
+| `COMPLEXITY.md` | The seven-dimensional theory/proxy/validation ledger; start here when interpreting signals. |
+| `SPEC.md` | The model: targets, signals, formulas, priors, Cynefin rules, split logic, risks. |
 | `HANDOFF.md` | This file: how to calibrate and roll out. |
 | `README.md` | Command reference and code layout. |
 | `prcost/` | The CLI (Python standard library only). |
-| `tests/` | 20 tests; they build their own synthetic git repo. |
+| `tests/` | 23 tests; they build their own synthetic git repo. |
 | `tools/dry_run_synthetic.py` | Runs the calibration pipeline on any public repo without API access. |
 
 The spec also exists as a live doc for the person who commissioned this
@@ -37,11 +38,22 @@ The spec also exists as a live doc for the person who commissioned this
 ## 0. Check the folder works (5 minutes, no access needed)
 
 ```bash
-cd prcost && python3 -m unittest discover -s tests            # expect: Ran 20 tests ... OK
+cd prcost && python3 -m unittest discover -s tests            # expect: Ran 23 tests ... OK
 git clone https://github.com/pallets/click.git /tmp/click
 python3 tools/dry_run_synthetic.py /tmp/click /tmp/prs-synthetic.jsonl 120
 cd /tmp/click && PYTHONPATH=/path/to/prcost python3 -m prcost calibrate fit --prs /tmp/prs-synthetic.jsonl
 ```
+
+## Dimension-level research gate
+
+The JSON output exposes D/F/P/H/B/T/R as separately measured proxy dimensions.
+Keep each dimension's theory, measurement error, incremental held-out predictive
+value, and causal evidence separately in the ledger in `COMPLEXITY.md`. No
+confidence score has been measured yet. `calibrate fit` includes chronological
+ablation probes for D/F/P/H/B/T; R requires separate risk-label/defect tests.
+**Do not interpret a positive ablation as causal proof or a negative ablation as
+disproving the underlying theory.** In particular, size S still embeds novelty,
+interaction and entropy when their standalone features are removed.
 
 ## 1. Get access
 

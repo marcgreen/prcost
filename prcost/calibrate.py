@@ -17,8 +17,19 @@ from . import gitio
 from .graph import build_graph
 from .model import FIX_RE, Analysis, Estimate, Params, entropy
 
-EFFORT_FEATURES = ["log_size", "log_interactions", "entropy", "log_blast", "unfamiliarity",
-                   "certificates", "shallow_share"]
+EFFORT_FEATURES = ["log_size", "log_novelty_depth", "log_interactions", "entropy", "log_blast",
+                   "unfamiliarity", "certificates", "shallow_share"]
+# Each ablation refits a model using the SAME chronological train/test folds.
+# The D probe is incremental beyond composite log_size; it does not remove all
+# depth information, because size itself includes novelty and interactions.
+EFFORT_ABLATIONS = {
+    "D": ["log_novelty_depth"],
+    "F": ["unfamiliarity"],
+    "P": ["log_interactions"],
+    "H": ["entropy"],
+    "B": ["log_blast"],
+    "T": ["certificates"],
+}
 WAIT_FEATURES = ["log_lines", "log_files", "log_size", "unfamiliarity"]
 BASELINE = ["log_lines"]
 
@@ -29,6 +40,7 @@ def feature_row(an: Analysis, est: Estimate, familiarity: float) -> dict[str, fl
     lines = sum(s.logic + s.shallow for s in an.sig.values())
     return {
         "log_size": math.log1p(est.size),
+        "log_novelty_depth": math.log1p(sum(c.depth for c in est.clusters)),
         "log_interactions": math.log1p(sum(c.interactions for c in est.clusters)),
         "entropy": entropy([an.sig[f].depth for f in est.logic_files]),
         "log_blast": math.log2(1 + est.blast),
@@ -217,14 +229,15 @@ def predict(model: dict, row: dict[str, float]) -> float:
     return model["intercept"] + sum(c * row[f] for c, f in zip(model["coef"], model["features"]))
 
 
-def cv_spearman(rows: list[dict], y: list[float], names: list[str], k: int = 5, seed: int = 7) -> float:
+def cv_spearman(rows: list[dict], y: list[float], names: list[str], k: int = 5,
+                seed: int = 7, warmup: int | None = None) -> float:
     """Forward-chaining evaluation. Rows MUST be sorted oldest to newest.
 
     Predict only later PRs using models fitted on strictly earlier PRs. The same
     temporal boundaries are used for the feature model and the baseline.
     """
     n = len(rows)
-    warmup = max(len(names) + 3, n // 2)
+    warmup = max(len(names) + 3, n // 2) if warmup is None else max(len(names) + 3, warmup)
     if n - warmup < 3:
         return float("nan")
     actual, pred = [], []
@@ -359,16 +372,30 @@ def _fit_models(records: list[dict], have_minutes: bool) -> dict:
         rows, y = [r["row"] for r in eff], [math.log1p(r[label]) for r in eff]
         out["effort"] = ridge([[x[f] for f in EFFORT_FEATURES] for x in rows], y, EFFORT_FEATURES)
         out["effort"]["label"] = label
-        out["effort"]["cv_spearman"] = cv_spearman(rows, y, EFFORT_FEATURES)
-        out["effort"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE)
+        common_warmup = max(len(EFFORT_FEATURES) + 3, len(rows) // 2)
+        out["effort"]["cv_spearman"] = cv_spearman(rows, y, EFFORT_FEATURES, warmup=common_warmup)
+        out["effort"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE, warmup=common_warmup)
         out["effort"]["n"] = len(eff)
+        full_cv = out["effort"]["cv_spearman"]
+        out["effort"]["dimension_ablations"] = {
+            key: {
+                "removed_features": removed,
+                "without_cv_spearman": cv_spearman(
+                    rows, y, [f for f in EFFORT_FEATURES if f not in removed],
+                    warmup=common_warmup),
+            }
+            for key, removed in EFFORT_ABLATIONS.items()
+        }
+        for entry in out["effort"]["dimension_ablations"].values():
+            entry["delta_spearman"] = full_cv - entry["without_cv_spearman"]
     wait = sorted((r for r in records if r.get("wait_hours") is not None), key=lambda r: r["merged"])
     if len(wait) >= 20:
         rows, y = [r["row"] for r in wait], [math.log1p(r["wait_hours"]) for r in wait]
         out["wait"] = ridge([[x[f] for f in WAIT_FEATURES] for x in rows], y, WAIT_FEATURES)
         out["wait"]["label"] = "wait_hours"
-        out["wait"]["cv_spearman"] = cv_spearman(rows, y, WAIT_FEATURES)
-        out["wait"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE)
+        common_warmup = max(len(WAIT_FEATURES) + 3, len(rows) // 2)
+        out["wait"]["cv_spearman"] = cv_spearman(rows, y, WAIT_FEATURES, warmup=common_warmup)
+        out["wait"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE, warmup=common_warmup)
         out["wait"]["n"] = len(wait)
     return out
 
@@ -397,9 +424,21 @@ def _report(records: list[dict], result: dict) -> str:
         for f, cs, c in sorted(zip(m["features"], m["coef_std"], m["coef"]), key=lambda t: -abs(t[1])):
             L.append(f"| {f} | {cs:+.3f} | {c:+.3f} |")
         if key == "effort":
+            L += ["", "### Individual complexity probes (chronological feature ablations)", "",
+                  "| Dimension | Removed feature(s) | Holdout Spearman without | Full minus without |",
+                  "| --- | --- | ---: | ---: |"]
+            for dim, a in m.get("dimension_ablations", {}).items():
+                L.append(f"| {dim} | {', '.join(a['removed_features'])} | "
+                         f"{a['without_cv_spearman']:.3f} | {a['delta_spearman']:+.3f} |")
+            L += ["", "Negative deltas mean the ablated model did better on this holdout. "
+                  "D is only the added value of novelty beyond log_size (which still embeds depth). "
+                  "Because size is composite and signals correlate, these are *conditional predictive* "
+                  "probes, not isolated causal contributions, theoretical validation, or robust "
+                  "per-dimension confidence intervals. R (Cynefin) is evaluated separately against "
+                  "follow-up defects below.", ""]
             b = m["coef"][m["features"].index("log_size")]
-            L += ["", f"Size elasticity (raw weight on log_size): {b:.2f}. With a minutes label this is 1 + epsilon; "
-                      "above 1 means splitting saves effort. With review touches it is only directional."]
+            L += ["", f"Observational weight on log_size: {b:.2f}. This is not a causal size elasticity; "
+                      "a value above 1 does not establish that splitting saves reviewer time."]
         L.append("")
     L += ["## Counterweight: did faster review let defects through?", "",
           "Follow-up fix rates exclude PRs without a complete observable 14-day follow-up window. "

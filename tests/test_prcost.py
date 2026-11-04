@@ -9,6 +9,7 @@ import unittest
 
 from prcost import calibrate
 from prcost.cli import _summary, main
+from prcost.dimensions import complexity_dimensions, prior_effort
 from prcost.describe import reading_order, review_guide
 from prcost.gitio import parse_diff
 from prcost.lines import classify_diff
@@ -297,6 +298,59 @@ class PrcostTest(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("Review first:", output.getvalue())
         self.assertIn("not an assignment", output.getvalue())
+
+    def test_seven_complexity_dimensions_preserve_theory_proxy_and_validity(self):
+        est = self.an.whole()
+        regime, reasons = self.an.regime(est, None)
+        dims = complexity_dimensions(self.an, est, 0.25, regime, reasons)
+        self.assertEqual([d["id"] for d in dims], list("DFPHBTR"))
+        for dim in dims:
+            self.assertTrue(dim["theory_inspiration"])
+            self.assertTrue(dim["operational_proxy"])
+            self.assertTrue(dim["measured"])
+            self.assertEqual(dim["measurement_confidence"], "unassessed")
+            self.assertEqual(dim["empirical_validity"], "unvalidated")
+        self.assertIsNone(dims[0]["prior_delta_ru"])
+        self.assertIsNone(dims[-1]["prior_delta_ru"])
+        self.assertLess(dims[5]["prior_delta_ru"], 0)  # tests discount an unvalidated prior
+        self.assertGreater(dims[1]["prior_delta_ru"], 0)  # unfamiliarity penalty
+        self.assertGreater(dims[2]["prior_delta_ru"], 0)  # edge interactions
+        self.assertAlmostEqual(prior_effort(est, 0.25, self.an.p),
+                               est.for_reviewer(0.25, self.an.p), places=6)
+        out = _summary(self.an, None, None)
+        self.assertEqual([d["id"] for d in out["complexity_dimensions"]], list("DFPHBTR"))
+
+    def test_dimension_report_is_visible_in_full_score(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        output = StringIO()
+        with redirect_stdout(output):
+            rc = main(["score", "--repo", self.repo, "--base", "main", "--head", "feature"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Seven complexity dimensions", output.getvalue())
+        self.assertIn("not additive", output.getvalue().replace("nonadditive", "not additive"))
+        self.assertIn("Review regime", output.getvalue())
+
+    def test_chronological_dimension_ablation_is_reported(self):
+        import math
+        rows = []
+        for i in range(20):
+            row = {f: math.log1p(i + (j + 1) * (i % (j + 3)) + 1) for j, f in
+                   enumerate(calibrate.EFFORT_FEATURES + calibrate.BASELINE)}
+            rows.append({"merged": i, "row": row, "touches": i % 8 + i / 4,
+                         "minutes": None, "wait_hours": None})
+        model = calibrate._fit_models(rows, False)["effort"]
+        self.assertEqual(set(model["dimension_ablations"]), set("DFPHBT"))
+        self.assertAlmostEqual(model["baseline_cv_spearman"],
+            calibrate.cv_spearman([r["row"] for r in rows],
+                [math.log1p(r["touches"]) for r in rows],
+                calibrate.BASELINE, warmup=max(len(calibrate.EFFORT_FEATURES) + 3,
+                                              len(rows) // 2)))
+        for d in model["dimension_ablations"].values():
+            self.assertIn("delta_spearman", d)
+            self.assertIn("without_cv_spearman", d)
+            self.assertEqual(d["delta_spearman"],
+                             model["cv_spearman"] - d["without_cv_spearman"])
 
     def test_stats(self):
         self.assertAlmostEqual(calibrate.spearman([1, 2, 3, 4], [10, 20, 30, 40]), 1.0)

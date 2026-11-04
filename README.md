@@ -1,12 +1,16 @@
 # prcost
 
-Analyzes pull-request reviewability: reviewer familiarity, dependency-aware reading order,
+Analyzes **seven theory-inspired complexity dimensions** (novelty/depth, familiarity,
+interactions, entropy, blast radius, test evidence, and review regime) alongside
+pull-request reviewability: reviewer familiarity, dependency-aware reading order,
 change clusters, potential coupling gaps, and exploratory split candidates. It also produces
 an **unvalidated** relative effort heuristic and an individual reviewer guide. Python and TypeScript/JavaScript.
 Standard library only (Python 3.9+, tested on 3.9 and 3.13); `score` and `describe` read nothing but
 your local git history.
 
-The model and its assumptions are in `SPEC.md`. Calibration on real PR history is in `HANDOFF.md`.
+Read **`COMPLEXITY.md` first** for the mapping from theory to measurable proxies,
+the seven-dimension JSON schema, measurement limitations and independent validation
+criteria. The formula and assumptions are in `SPEC.md`. Calibration is in `HANDOFF.md`.
 
 ## Install
 
@@ -30,7 +34,10 @@ prcost describe --reviewer bob > guide.md      # reviewer-tailored description (
 prcost score --hotfix                          # force the Chaotic regime
 ```
 
-`score` prints an advisory review regime, relative effort RU for candidate reviewers, explanatory
+`score` prints a seven-dimensional complexity ledger (D/F/P/H/B/T/R) with unvalidated
+proxy measurements and local parameter-off score sensitivity; `score --json` includes
+`complexity_dimensions` for programmatic analysis. Its local deltas are not additive,
+causal, or empirically calibrated. `score` also prints an advisory review regime, relative effort RU for candidate reviewers, explanatory
 factors, clusters, files by novelty, a **what-if** split comparison (not a verified saving), and
 files that historically change with touched files. Reviewer lists are not assignments: availability,
 independence, expertise and workload must be assessed separately.
@@ -78,6 +85,8 @@ python3 -m unittest discover -s tests -v
 | `prcost/graph.py` | import graph (Python AST, TS/JS incl. tsconfig paths and workspace packages), co-change, blast radius, clusters |
 | `prcost/people.py` | reviewer familiarity from decayed commit history, identity merging |
 | `prcost/model.py` | novelty heuristic, the effort formula, advisory workflow, split planning |
+| `prcost/dimensions.py` | seven first-class dimensions and sensitivity of the existing RU prior |
+| `COMPLEXITY.md` | theory / proxy / validation ledger, per-dimension limitations and falsifiers |
 | `prcost/describe.py` | reviewer-tailored description |
 | `prcost/calibrate.py` | REST fetch, labels, ridge regression, chronological evaluation, report |
 | `prcost/cli.py` | command line |

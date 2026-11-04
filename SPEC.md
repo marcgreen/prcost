@@ -13,6 +13,9 @@ What exists now:
 - A handoff (`HANDOFF.md`) for tuning the model on real PR history once repo access exists.
 
 **Status: every weight is a prior. No number in this doc has been validated against observed review effort.**
+The seven dimensions must remain first-class concepts: each has a theoretical
+motivation, a concrete fallible proxy, and an independent empirical validation
+question. **`COMPLEXITY.md` is the canonical dimension ledger.**
 Read `REVIEW.md` for corrections to the original interpretation. In particular, the model measures
 compressed novelty, not Bennett logical depth; splits are exploratory, and a changed test is not
 proof of coverage. Historical calibration now defaults to per-PR graph reconstruction and uses
@@ -41,7 +44,9 @@ Boundary note: optimizing reviewer time moves some cost onto authors. That cost 
 
 ## Signals
 
-Six signals feed the effort estimate and one (Cynefin) picks the review process. All are computed from git alone, with no network access.
+There are **seven first-class dimensions**. Six feed the prior effort estimate,
+while the seventh (Cynefin) picks the review process. A measured proxy is not a
+measurement of the corresponding theoretical construct. All are computed from git alone, with no network access.
 
 | Signal | Borrowed idea | Proxy in prcost | Enters the model as |
 | --- | --- | --- | --- |
@@ -103,7 +108,11 @@ All priors live in `Params` in `prcost/model.py`. Scale check: in two public rep
 
 **Queue wait.** No structural prior: until calibrated, prcost reports only its drivers (lines, files, parts). After calibration it predicts wait hours from log lines, log files, log S and unfamiliarity. Reviewer load and time of day are known drivers that need live data and are not modeled yet.
 
-**After calibration** the structural form is replaced by a log-linear fit of the same signals, log(1 + y) on log(1 + S), log(1 + edges), entropy, log2(1 + B), 1 − F, T and shallow share. The weight on log(1 + S) estimates an observational association, not the causal savings from splitting a PR. It should not be equated with a structural 1 + ε without an identification strategy.
+**After calibration** the structural form is replaced by a log-linear fit of the same signals, log(1 + y) on log(1 + S), log(1 + edges), entropy, log2(1 + B), 1 − F, T and shallow share. Chronological feature ablations for D/F/P/H/B/T are reported independently; they
+measure incremental prediction conditional on remaining features, which still
+share information through the composite size S. R is checked against expert
+risk labels and subsequent defects, not used as a cost multiplier.
+The weight on log(1 + S) estimates an observational association, not the causal savings from splitting a PR. It should not be equated with a structural 1 + ε without an identification strategy.
 
 ## Cynefin routing
 
@@ -149,7 +158,7 @@ What the guide contains:
 - **Intent**, a slot only the author can fill: what should be true after merge, and how they checked it.
 - **Reading order:** dependencies before dependents, then tests. Each file is tagged "you know this file", "partly familiar" or "new to you". Unfamiliar source files list the context worth opening first.
 - **Interactions to check:** each coupling edge, phrased as a question.
-- **Safe to skim:** the mechanical lines, by kind.
+- **Lower-effort changes to verify:** lines classified as shallow, by kind (never automatically safe).
 - **Blast radius:** the closest files that depend on the change.
 - **Possibly missing changes:** files that changed in at least 60% of past commits with a touched file but are untouched here. This catches coupling that imports can't see, such as config next to code.
 - **Tests as evidence:** which changed source files have changed tests.

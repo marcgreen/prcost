@@ -8,6 +8,7 @@ import sys
 
 from . import calibrate
 from .describe import REGIME_MODE, review_guide
+from .dimensions import complexity_dimensions
 from .model import Analysis, Params
 
 
@@ -61,6 +62,7 @@ def _summary(an: Analysis, reviewer_query: str | None, calibration: dict | None)
             "certificate_multiplier": 1 - p.tau * est.certificates,
             "familiarity_multiplier": 1 + p.alpha * (1 - F_used),
         },
+        "complexity_dimensions": complexity_dimensions(an, est, F_used, regime, reasons),
         "files_detail": [
             {"path": s.path, "status": s.status, "logic_added": s.logic_added, "logic_removed": s.logic_removed,
              "shallow": s.shallow, "shallow_kinds": s.shallow_kinds, "branches": s.branches,
@@ -114,6 +116,27 @@ def _print(an: Analysis, s: dict) -> None:
     if "calibrated" in s:
         for k, v in s["calibrated"].items():
             w(f"  calibrated prediction: {k} = {v:,.1f}")
+    w("")
+    w("Seven complexity dimensions (theory-inspired proxies; not validated measures)")
+    w("  ID  Dimension                 Measured proxy                           Prior delta RU")
+    for d in s["complexity_dimensions"]:
+        m = d["measured"]
+        key = d["id"]
+        value = {
+            "D": lambda: f"{m['novelty_depth_ru']:,.0f} depth RU",
+            "F": lambda: f"{m['familiarity']:.2f} familiarity",
+            "P": lambda: f"{m['coupling_edges']} coupled edges",
+            "H": lambda: f"{m['across_cluster_bits']:.2f} cross-cluster bits",
+            "B": lambda: f"{m['weighted_reach']:.1f} weighted reach",
+            "T": lambda: f"{m['changed_test_relationship_share']:.0%} related changed tests",
+            "R": lambda: m['regime'],
+        }[key]()
+        impact = f"{d['prior_delta_ru']:+,.0f}" if d['prior_delta_ru'] is not None else "n/a"
+        w(f"  {key:<3} {d['name']:<25} {value:<40} {impact:>9}")
+    w("  D and R have no separable prior delta. Other deltas switch one hand-set coefficient")
+    w("  off at a time; they are nonlinear, nonadditive and NOT empirical effects.")
+    w("  Each dimension has unassessed measurement confidence and unvalidated empirical validity.")
+    w("  See COMPLEXITY.md and score --json for definitions and per-dimension limitations.")
     w("")
     w("Why")
     w(f"  size S              {f['size_S']:>8,.0f} RU  (logic depth {f['logic_depth']:,.0f} + interactions "

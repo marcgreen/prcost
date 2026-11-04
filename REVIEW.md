@@ -93,3 +93,14 @@ Add GitHub/GitLab review history, CODEOWNERS/approval rules, current queue, on-c
 ## Validation performed
 
 All 20 unit tests were run in the supplied package in this session. The CLI was exercised through tests that construct a temporary synthetic git repository. No claim is made of prospective empirical validity, real GitHub API access, or production readiness.
+
+
+## Complexity-dimension restoration (post-v0.2 addendum)
+
+The earlier review overemphasized reviewer workflow and underemphasized the
+underlying seven-dimensional complexity hypothesis. `COMPLEXITY.md` now keeps
+D/F/P/H/B/T/R first-class with separately stated theory, operational proxy,
+validation status and falsifiers. `score` and `score --json` expose those
+measurements; `calibrate fit` emits chronological D/F/P/H/B/T feature ablations.
+The underlying RU formula and safety corrections are unchanged. Param-off RU
+deltas are nonadditive sensitivity diagnostics, not causal evidence.

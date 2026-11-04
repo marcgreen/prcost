@@ -1,0 +1,609 @@
+diff --git a/COMPLEXITY.md b/COMPLEXITY.md
+new file mode 100644
+index 0000000..0821c27
+--- /dev/null
++++ b/COMPLEXITY.md
+@@ -0,0 +1,91 @@
++# Complexity dimensions: theory, measurements, falsification
++
++**Status: research prototype, not a validated predictor of review time or review
++quality.** The seven dimensions are permanent concepts in the model, not seven
++claims that their current proxies are correct. Each dimension has (1) a theoretical
++motivation, (2) an operational measurement, and (3) an empirical validation
++question. These are deliberately kept separate.
++
++`prcost score` shows all seven dimensions. `prcost score --json` emits the stable
++`complexity_dimensions` array with `id`, `theory_inspiration`, `operational_proxy`,
++`measured`, `measurement_confidence`, `empirical_validity`, `prior_delta_ru`, and
++`limitation`. **`measurement_confidence: unassessed` is not a low-confidence estimate:
++we have not yet measured reliability.** `empirical_validity: unvalidated` means
++there is no held-out evidence here to support the mapping from proxy to outcome.
++
++| Dimension | Theoretical motivation (not equivalent to measured value) | Operational proxy today | What to validate independently |
++| --- | --- | --- | --- |
++| **D · Novelty / depth** | Kolmogorov complexity; Bennett logical depth (resources needed to construct/explain) | zlib delta from added/removed semantic lines conditional on old file; branch-token adjustment; test weights | Predicts minutes and missed defects beyond changed semantic lines; separately evaluate risk of tiny but high-impact edits |
++| **F · Familiarity** | Conditional complexity of a change given reviewer knowledge | Reviewer’s time-decayed prior authorship of file and nearby files | Predicts reviewer-specific minutes *after controlling for skill, authorship, load and independence*; test generalization to review-only experts |
++| **P · Interactions** | Parameterized and combinatorial complexity of interacting components | Number and depth-weighted charge of import and historical co-change edges within changed-file clusters | Added prediction beyond number of files; manually audit hidden API, data, rollout and runtime dependencies |
++| **H · Entropy** | Shannon entropy (uncertainty/distribution) | Entropy of estimated change depth within clusters and costs across clusters | Whether distribution adds predictive power after controlling size, file count and graph structure |
++| **B · Blast radius** | Graph reachability / propagation | Distance-weighted non-test transitive importers | Correlates with actual behavioral impact and regression scope; compare to runtime and dataflow dependencies |
++| **T · Test evidence** | Proof certificates and communication complexity (how evidence reduces verification work) | Share of changed source files related to changed tests | Does the test actually exercise changed behavior? Does coverage, mutation testing or reviewer evidence reduce time without worse escapes? |
++| **R · Review regime** | Cynefin sense-making (workflow under uncertainty) | Rule-based Clear / Complicated / Complex / Chaotic routing | Predicts different verification needs or defect risk; compare to expert labels and defect outcomes, not RU |
++
++## How the score uses the dimensions
++
++D and P create the weighted size of each interacting cluster. H penalizes
++within-cluster and across-cluster scattering. B, F and T respectively apply
++blast-radius, familiarity and test co-change multipliers. A size exponent adds
++an **unvalidated** superlinear prior. R chooses an advisory review workflow but
++has no cost multiplier. The exact equation and weight priors are in `SPEC.md`.
++
++The output includes **local prior deltas** for F, P, H, B and T: the full
++score minus the same heuristic score with exactly one coefficient set to zero.
++This includes recalculating cluster costs, size and across-cluster entropy as
++necessary. A negative delta is possible, most obviously for T's discount.
++These deltas **do not sum to the total**, are **not causal importance** or
++predicted minutes saved, and only describe sensitivity to current *hand-set*
++parameters. D does not have a meaningful independent “off” setting because
++it defines the base quantity used throughout the model; R has no cost factor.
++Both therefore have `prior_delta_ru: null`.
++
++The old `factors.logic_depth` field is retained for compatibility but is a
++misleading name: it means *compression-based novelty RU*, **not** Bennett
++logical depth. Do not relabel it as a theoretical quantity in dashboards.
++
++## Validation protocol: preserve a separate ledger for each dimension
++
++1. **Measurement reliability.** Create human-reviewed examples per language,
++   including moved imports, tiny permission changes, undocumented runtime
++   coupling, renamed symbols, and tests that were changed but never run the
++   changed code. Record proxy false positives/negatives. Version the corpus.
++2. **Outcome measurements.** Prefer reviewer-reported active minutes. Use review
++   touches only as a weak fallback. Separately measure queue wait, escapes,
++   author overhead and review concentration. Avoid inferring elapsed duration
++   from GitHub timestamps as active effort.
++3. **Chronological evaluation.** Train on earlier PRs, evaluate only later
++   PRs, using historical dependency graphs and commit ancestry. If predicting
++   at creation time, use the *PR state at creation*, not its later final diff.
++4. **Ablations.** `prcost calibrate fit` now reports held-out Spearman with
++   one feature removed at a time for D/F/P/H/B/T. Compare the full model and
++   the lines-changed baseline **on the same folds**. A negative full-minus-
++   ablated score means the simpler model was better on that holdout.
++5. **Causal claims need experiments.** Even a predictive feature does not show
++   that reducing it via PR splitting lowers effort. Use controlled trials or
++   credible quasi-experiments, and track review quality plus author overhead.
++
++**Interpretation limits of the current ablations:** the D ablation removes an
++additional `log_novelty_depth` feature *while retaining* `log_size`, which itself
++contains D/P/H information. Thus it asks whether novel depth adds predictive
++value beyond the composite size feature. P and H have the same partial-leakage
++problem through `log_size`. Correlated predictors, tiny datasets and
++hand-set model weights can yield unstable deltas. Confidence intervals,
++repository-level replication, and conditional effect analysis are future work.
++R is not one of these regression predictors: validate regimes against expert
++review classifications and defect outcomes in the calibration report.
++
++### Research ledger (do not replace missing evidence with a guessed score)
++
++| Field | Required contents | Current value |
++| --- | --- | --- |
++| Operational proxy | Versioned measurement and known blind spots | Described above and in `SPEC.md` |
++| Measurement reliability | Labeled examples, error rate and confidence interval | **Unassessed** |
++| Incremental predictive validity | Chronological out-of-sample lift over simpler models, including ablation | **Unvalidated on real review minutes** |
++| Structural or causal validity | Intervention evidence that changing the signal changes the outcome | **Unvalidated** |
++| Deployment decision | Keep, refine, or retire *proxy* (not theoretical dimension), with justification | **Research only** |
++
++The purpose is to make every disagreement testable: a proxy may fail even when
++the theoretical dimension remains useful, and a good predictor may have no
++causal meaning. Neither should be obscured by a single RU headline.
+diff --git a/HANDOFF.md b/HANDOFF.md
+index 315fc34..8d6d993 100644
+--- a/HANDOFF.md
++++ b/HANDOFF.md
+@@ -7,11 +7,12 @@ only this folder and access to the repository. Nothing here depends on the conve
+ 
+ | Path | What it is |
+ | --- | --- |
+-| `SPEC.md` | The model: targets, signals, formulas, priors, Cynefin rules, split logic, risks. Start here for the why. |
++| `COMPLEXITY.md` | The seven-dimensional theory/proxy/validation ledger; start here when interpreting signals. |
++| `SPEC.md` | The model: targets, signals, formulas, priors, Cynefin rules, split logic, risks. |
+ | `HANDOFF.md` | This file: how to calibrate and roll out. |
+ | `README.md` | Command reference and code layout. |
+ | `prcost/` | The CLI (Python standard library only). |
+-| `tests/` | 20 tests; they build their own synthetic git repo. |
++| `tests/` | 23 tests; they build their own synthetic git repo. |
+ | `tools/dry_run_synthetic.py` | Runs the calibration pipeline on any public repo without API access. |
+ 
+ The spec also exists as a live doc for the person who commissioned this
+@@ -37,12 +38,23 @@ The spec also exists as a live doc for the person who commissioned this
+ ## 0. Check the folder works (5 minutes, no access needed)
+ 
+ ```bash
+-cd prcost && python3 -m unittest discover -s tests            # expect: Ran 20 tests ... OK
++cd prcost && python3 -m unittest discover -s tests            # expect: Ran 23 tests ... OK
+ git clone https://github.com/pallets/click.git /tmp/click
+ python3 tools/dry_run_synthetic.py /tmp/click /tmp/prs-synthetic.jsonl 120
+ cd /tmp/click && PYTHONPATH=/path/to/prcost python3 -m prcost calibrate fit --prs /tmp/prs-synthetic.jsonl
+ ```
+ 
++## Dimension-level research gate
++
++The JSON output exposes D/F/P/H/B/T/R as separately measured proxy dimensions.
++Keep each dimension's theory, measurement error, incremental held-out predictive
++value, and causal evidence separately in the ledger in `COMPLEXITY.md`. No
++confidence score has been measured yet. `calibrate fit` includes chronological
++ablation probes for D/F/P/H/B/T; R requires separate risk-label/defect tests.
++**Do not interpret a positive ablation as causal proof or a negative ablation as
++disproving the underlying theory.** In particular, size S still embeds novelty,
++interaction and entropy when their standalone features are removed.
++
+ ## 1. Get access
+ 
+ prcost reads git history locally and PR review history through the GitHub REST API (`gh api`).
+diff --git a/README.md b/README.md
+index 6b63230..7946bcc 100644
+--- a/README.md
++++ b/README.md
+@@ -1,12 +1,16 @@
+ # prcost
+ 
+-Analyzes pull-request reviewability: reviewer familiarity, dependency-aware reading order,
++Analyzes **seven theory-inspired complexity dimensions** (novelty/depth, familiarity,
++interactions, entropy, blast radius, test evidence, and review regime) alongside
++pull-request reviewability: reviewer familiarity, dependency-aware reading order,
+ change clusters, potential coupling gaps, and exploratory split candidates. It also produces
+ an **unvalidated** relative effort heuristic and an individual reviewer guide. Python and TypeScript/JavaScript.
+ Standard library only (Python 3.9+, tested on 3.9 and 3.13); `score` and `describe` read nothing but
+ your local git history.
+ 
+-The model and its assumptions are in `SPEC.md`. Calibration on real PR history is in `HANDOFF.md`.
++Read **`COMPLEXITY.md` first** for the mapping from theory to measurable proxies,
++the seven-dimension JSON schema, measurement limitations and independent validation
++criteria. The formula and assumptions are in `SPEC.md`. Calibration is in `HANDOFF.md`.
+ 
+ ## Install
+ 
+@@ -30,7 +34,10 @@ prcost describe --reviewer bob > guide.md      # reviewer-tailored description (
+ prcost score --hotfix                          # force the Chaotic regime
+ ```
+ 
+-`score` prints an advisory review regime, relative effort RU for candidate reviewers, explanatory
++`score` prints a seven-dimensional complexity ledger (D/F/P/H/B/T/R) with unvalidated
++proxy measurements and local parameter-off score sensitivity; `score --json` includes
++`complexity_dimensions` for programmatic analysis. Its local deltas are not additive,
++causal, or empirically calibrated. `score` also prints an advisory review regime, relative effort RU for candidate reviewers, explanatory
+ factors, clusters, files by novelty, a **what-if** split comparison (not a verified saving), and
+ files that historically change with touched files. Reviewer lists are not assignments: availability,
+ independence, expertise and workload must be assessed separately.
+@@ -78,6 +85,8 @@ python3 -m unittest discover -s tests -v
+ | `prcost/graph.py` | import graph (Python AST, TS/JS incl. tsconfig paths and workspace packages), co-change, blast radius, clusters |
+ | `prcost/people.py` | reviewer familiarity from decayed commit history, identity merging |
+ | `prcost/model.py` | novelty heuristic, the effort formula, advisory workflow, split planning |
++| `prcost/dimensions.py` | seven first-class dimensions and sensitivity of the existing RU prior |
++| `COMPLEXITY.md` | theory / proxy / validation ledger, per-dimension limitations and falsifiers |
+ | `prcost/describe.py` | reviewer-tailored description |
+ | `prcost/calibrate.py` | REST fetch, labels, ridge regression, chronological evaluation, report |
+ | `prcost/cli.py` | command line |
+diff --git a/REVIEW.md b/REVIEW.md
+index 9c3a656..7972fff 100644
+--- a/REVIEW.md
++++ b/REVIEW.md
+@@ -93,3 +93,14 @@ Add GitHub/GitLab review history, CODEOWNERS/approval rules, current queue, on-c
+ ## Validation performed
+ 
+ All 20 unit tests were run in the supplied package in this session. The CLI was exercised through tests that construct a temporary synthetic git repository. No claim is made of prospective empirical validity, real GitHub API access, or production readiness.
++
++
++## Complexity-dimension restoration (post-v0.2 addendum)
++
++The earlier review overemphasized reviewer workflow and underemphasized the
++underlying seven-dimensional complexity hypothesis. `COMPLEXITY.md` now keeps
++D/F/P/H/B/T/R first-class with separately stated theory, operational proxy,
++validation status and falsifiers. `score` and `score --json` expose those
++measurements; `calibrate fit` emits chronological D/F/P/H/B/T feature ablations.
++The underlying RU formula and safety corrections are unchanged. Param-off RU
++deltas are nonadditive sensitivity diagnostics, not causal evidence.
+diff --git a/SPEC.md b/SPEC.md
+index 277d58e..19c4763 100644
+--- a/SPEC.md
++++ b/SPEC.md
+@@ -13,6 +13,9 @@ What exists now:
+ - A handoff (`HANDOFF.md`) for tuning the model on real PR history once repo access exists.
+ 
+ **Status: every weight is a prior. No number in this doc has been validated against observed review effort.**
++The seven dimensions must remain first-class concepts: each has a theoretical
++motivation, a concrete fallible proxy, and an independent empirical validation
++question. **`COMPLEXITY.md` is the canonical dimension ledger.**
+ Read `REVIEW.md` for corrections to the original interpretation. In particular, the model measures
+ compressed novelty, not Bennett logical depth; splits are exploratory, and a changed test is not
+ proof of coverage. Historical calibration now defaults to per-PR graph reconstruction and uses
+@@ -41,7 +44,9 @@ Boundary note: optimizing reviewer time moves some cost onto authors. That cost
+ 
+ ## Signals
+ 
+-Six signals feed the effort estimate and one (Cynefin) picks the review process. All are computed from git alone, with no network access.
++There are **seven first-class dimensions**. Six feed the prior effort estimate,
++while the seventh (Cynefin) picks the review process. A measured proxy is not a
++measurement of the corresponding theoretical construct. All are computed from git alone, with no network access.
+ 
+ | Signal | Borrowed idea | Proxy in prcost | Enters the model as |
+ | --- | --- | --- | --- |
+@@ -103,7 +108,11 @@ All priors live in `Params` in `prcost/model.py`. Scale check: in two public rep
+ 
+ **Queue wait.** No structural prior: until calibrated, prcost reports only its drivers (lines, files, parts). After calibration it predicts wait hours from log lines, log files, log S and unfamiliarity. Reviewer load and time of day are known drivers that need live data and are not modeled yet.
+ 
+-**After calibration** the structural form is replaced by a log-linear fit of the same signals, log(1 + y) on log(1 + S), log(1 + edges), entropy, log2(1 + B), 1 − F, T and shallow share. The weight on log(1 + S) estimates an observational association, not the causal savings from splitting a PR. It should not be equated with a structural 1 + ε without an identification strategy.
++**After calibration** the structural form is replaced by a log-linear fit of the same signals, log(1 + y) on log(1 + S), log(1 + edges), entropy, log2(1 + B), 1 − F, T and shallow share. Chronological feature ablations for D/F/P/H/B/T are reported independently; they
++measure incremental prediction conditional on remaining features, which still
++share information through the composite size S. R is checked against expert
++risk labels and subsequent defects, not used as a cost multiplier.
++The weight on log(1 + S) estimates an observational association, not the causal savings from splitting a PR. It should not be equated with a structural 1 + ε without an identification strategy.
+ 
+ ## Cynefin routing
+ 
+@@ -149,7 +158,7 @@ What the guide contains:
+ - **Intent**, a slot only the author can fill: what should be true after merge, and how they checked it.
+ - **Reading order:** dependencies before dependents, then tests. Each file is tagged "you know this file", "partly familiar" or "new to you". Unfamiliar source files list the context worth opening first.
+ - **Interactions to check:** each coupling edge, phrased as a question.
+-- **Safe to skim:** the mechanical lines, by kind.
++- **Lower-effort changes to verify:** lines classified as shallow, by kind (never automatically safe).
+ - **Blast radius:** the closest files that depend on the change.
+ - **Possibly missing changes:** files that changed in at least 60% of past commits with a touched file but are untouched here. This catches coupling that imports can't see, such as config next to code.
+ - **Tests as evidence:** which changed source files have changed tests.
+diff --git a/prcost/__init__.py b/prcost/__init__.py
+index fbb7f63..faf04ac 100644
+--- a/prcost/__init__.py
++++ b/prcost/__init__.py
+@@ -1,2 +1,2 @@
+ """prcost: analyze pull request reviewability and experimental effort heuristics."""
+-__version__ = "0.2.0"
++__version__ = "0.2.1"
+diff --git a/prcost/calibrate.py b/prcost/calibrate.py
+index cc34f8a..cd586b0 100644
+--- a/prcost/calibrate.py
++++ b/prcost/calibrate.py
+@@ -17,8 +17,19 @@ from . import gitio
+ from .graph import build_graph
+ from .model import FIX_RE, Analysis, Estimate, Params, entropy
+ 
+-EFFORT_FEATURES = ["log_size", "log_interactions", "entropy", "log_blast", "unfamiliarity",
+-                   "certificates", "shallow_share"]
++EFFORT_FEATURES = ["log_size", "log_novelty_depth", "log_interactions", "entropy", "log_blast",
++                   "unfamiliarity", "certificates", "shallow_share"]
++# Each ablation refits a model using the SAME chronological train/test folds.
++# The D probe is incremental beyond composite log_size; it does not remove all
++# depth information, because size itself includes novelty and interactions.
++EFFORT_ABLATIONS = {
++    "D": ["log_novelty_depth"],
++    "F": ["unfamiliarity"],
++    "P": ["log_interactions"],
++    "H": ["entropy"],
++    "B": ["log_blast"],
++    "T": ["certificates"],
++}
+ WAIT_FEATURES = ["log_lines", "log_files", "log_size", "unfamiliarity"]
+ BASELINE = ["log_lines"]
+ 
+@@ -29,6 +40,7 @@ def feature_row(an: Analysis, est: Estimate, familiarity: float) -> dict[str, fl
+     lines = sum(s.logic + s.shallow for s in an.sig.values())
+     return {
+         "log_size": math.log1p(est.size),
++        "log_novelty_depth": math.log1p(sum(c.depth for c in est.clusters)),
+         "log_interactions": math.log1p(sum(c.interactions for c in est.clusters)),
+         "entropy": entropy([an.sig[f].depth for f in est.logic_files]),
+         "log_blast": math.log2(1 + est.blast),
+@@ -217,14 +229,15 @@ def predict(model: dict, row: dict[str, float]) -> float:
+     return model["intercept"] + sum(c * row[f] for c, f in zip(model["coef"], model["features"]))
+ 
+ 
+-def cv_spearman(rows: list[dict], y: list[float], names: list[str], k: int = 5, seed: int = 7) -> float:
++def cv_spearman(rows: list[dict], y: list[float], names: list[str], k: int = 5,
++                seed: int = 7, warmup: int | None = None) -> float:
+     """Forward-chaining evaluation. Rows MUST be sorted oldest to newest.
+ 
+     Predict only later PRs using models fitted on strictly earlier PRs. The same
+     temporal boundaries are used for the feature model and the baseline.
+     """
+     n = len(rows)
+-    warmup = max(len(names) + 3, n // 2)
++    warmup = max(len(names) + 3, n // 2) if warmup is None else max(len(names) + 3, warmup)
+     if n - warmup < 3:
+         return float("nan")
+     actual, pred = [], []
+@@ -359,16 +372,30 @@ def _fit_models(records: list[dict], have_minutes: bool) -> dict:
+         rows, y = [r["row"] for r in eff], [math.log1p(r[label]) for r in eff]
+         out["effort"] = ridge([[x[f] for f in EFFORT_FEATURES] for x in rows], y, EFFORT_FEATURES)
+         out["effort"]["label"] = label
+-        out["effort"]["cv_spearman"] = cv_spearman(rows, y, EFFORT_FEATURES)
+-        out["effort"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE)
++        common_warmup = max(len(EFFORT_FEATURES) + 3, len(rows) // 2)
++        out["effort"]["cv_spearman"] = cv_spearman(rows, y, EFFORT_FEATURES, warmup=common_warmup)
++        out["effort"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE, warmup=common_warmup)
+         out["effort"]["n"] = len(eff)
++        full_cv = out["effort"]["cv_spearman"]
++        out["effort"]["dimension_ablations"] = {
++            key: {
++                "removed_features": removed,
++                "without_cv_spearman": cv_spearman(
++                    rows, y, [f for f in EFFORT_FEATURES if f not in removed],
++                    warmup=common_warmup),
++            }
++            for key, removed in EFFORT_ABLATIONS.items()
++        }
++        for entry in out["effort"]["dimension_ablations"].values():
++            entry["delta_spearman"] = full_cv - entry["without_cv_spearman"]
+     wait = sorted((r for r in records if r.get("wait_hours") is not None), key=lambda r: r["merged"])
+     if len(wait) >= 20:
+         rows, y = [r["row"] for r in wait], [math.log1p(r["wait_hours"]) for r in wait]
+         out["wait"] = ridge([[x[f] for f in WAIT_FEATURES] for x in rows], y, WAIT_FEATURES)
+         out["wait"]["label"] = "wait_hours"
+-        out["wait"]["cv_spearman"] = cv_spearman(rows, y, WAIT_FEATURES)
+-        out["wait"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE)
++        common_warmup = max(len(WAIT_FEATURES) + 3, len(rows) // 2)
++        out["wait"]["cv_spearman"] = cv_spearman(rows, y, WAIT_FEATURES, warmup=common_warmup)
++        out["wait"]["baseline_cv_spearman"] = cv_spearman(rows, y, BASELINE, warmup=common_warmup)
+         out["wait"]["n"] = len(wait)
+     return out
+ 
+@@ -397,9 +424,21 @@ def _report(records: list[dict], result: dict) -> str:
+         for f, cs, c in sorted(zip(m["features"], m["coef_std"], m["coef"]), key=lambda t: -abs(t[1])):
+             L.append(f"| {f} | {cs:+.3f} | {c:+.3f} |")
+         if key == "effort":
++            L += ["", "### Individual complexity probes (chronological feature ablations)", "",
++                  "| Dimension | Removed feature(s) | Holdout Spearman without | Full minus without |",
++                  "| --- | --- | ---: | ---: |"]
++            for dim, a in m.get("dimension_ablations", {}).items():
++                L.append(f"| {dim} | {', '.join(a['removed_features'])} | "
++                         f"{a['without_cv_spearman']:.3f} | {a['delta_spearman']:+.3f} |")
++            L += ["", "Negative deltas mean the ablated model did better on this holdout. "
++                  "D is only the added value of novelty beyond log_size (which still embeds depth). "
++                  "Because size is composite and signals correlate, these are *conditional predictive* "
++                  "probes, not isolated causal contributions, theoretical validation, or robust "
++                  "per-dimension confidence intervals. R (Cynefin) is evaluated separately against "
++                  "follow-up defects below.", ""]
+             b = m["coef"][m["features"].index("log_size")]
+-            L += ["", f"Size elasticity (raw weight on log_size): {b:.2f}. With a minutes label this is 1 + epsilon; "
+-                      "above 1 means splitting saves effort. With review touches it is only directional."]
++            L += ["", f"Observational weight on log_size: {b:.2f}. This is not a causal size elasticity; "
++                      "a value above 1 does not establish that splitting saves reviewer time."]
+         L.append("")
+     L += ["## Counterweight: did faster review let defects through?", "",
+           "Follow-up fix rates exclude PRs without a complete observable 14-day follow-up window. "
+diff --git a/prcost/cli.py b/prcost/cli.py
+index e820cb7..a3308e5 100644
+--- a/prcost/cli.py
++++ b/prcost/cli.py
+@@ -8,6 +8,7 @@ import sys
+ 
+ from . import calibrate
+ from .describe import REGIME_MODE, review_guide
++from .dimensions import complexity_dimensions
+ from .model import Analysis, Params
+ 
+ 
+@@ -61,6 +62,7 @@ def _summary(an: Analysis, reviewer_query: str | None, calibration: dict | None)
+             "certificate_multiplier": 1 - p.tau * est.certificates,
+             "familiarity_multiplier": 1 + p.alpha * (1 - F_used),
+         },
++        "complexity_dimensions": complexity_dimensions(an, est, F_used, regime, reasons),
+         "files_detail": [
+             {"path": s.path, "status": s.status, "logic_added": s.logic_added, "logic_removed": s.logic_removed,
+              "shallow": s.shallow, "shallow_kinds": s.shallow_kinds, "branches": s.branches,
+@@ -115,6 +117,27 @@ def _print(an: Analysis, s: dict) -> None:
+         for k, v in s["calibrated"].items():
+             w(f"  calibrated prediction: {k} = {v:,.1f}")
+     w("")
++    w("Seven complexity dimensions (theory-inspired proxies; not validated measures)")
++    w("  ID  Dimension                 Measured proxy                           Prior delta RU")
++    for d in s["complexity_dimensions"]:
++        m = d["measured"]
++        key = d["id"]
++        value = {
++            "D": lambda: f"{m['novelty_depth_ru']:,.0f} depth RU",
++            "F": lambda: f"{m['familiarity']:.2f} familiarity",
++            "P": lambda: f"{m['coupling_edges']} coupled edges",
++            "H": lambda: f"{m['across_cluster_bits']:.2f} cross-cluster bits",
++            "B": lambda: f"{m['weighted_reach']:.1f} weighted reach",
++            "T": lambda: f"{m['changed_test_relationship_share']:.0%} related changed tests",
++            "R": lambda: m['regime'],
++        }[key]()
++        impact = f"{d['prior_delta_ru']:+,.0f}" if d['prior_delta_ru'] is not None else "n/a"
++        w(f"  {key:<3} {d['name']:<25} {value:<40} {impact:>9}")
++    w("  D and R have no separable prior delta. Other deltas switch one hand-set coefficient")
++    w("  off at a time; they are nonlinear, nonadditive and NOT empirical effects.")
++    w("  Each dimension has unassessed measurement confidence and unvalidated empirical validity.")
++    w("  See COMPLEXITY.md and score --json for definitions and per-dimension limitations.")
++    w("")
+     w("Why")
+     w(f"  size S              {f['size_S']:>8,.0f} RU  (logic depth {f['logic_depth']:,.0f} + interactions "
+       f"{an.p.beta:g} x {f['interaction_ru']:,.0f} + {f['shallow_lines']} shallow lines x {an.p.shallow_ru:g}, "
+diff --git a/prcost/dimensions.py b/prcost/dimensions.py
+new file mode 100644
+index 0000000..8a91110
+--- /dev/null
++++ b/prcost/dimensions.py
+@@ -0,0 +1,100 @@
++"""First-class, explicitly unvalidated complexity dimensions for score/JSON.
++
++The theory labels are hypotheses motivating operational proxies. The reported
++counterfactuals are local changes to *hand-set* weights, not measured causal
++contributions, and cannot be summed to reconstruct total effort.
++"""
++from __future__ import annotations
++
++import math
++from dataclasses import replace
++
++from .model import Analysis, Estimate, Params, entropy
++
++
++DEFINITIONS = (
++    ("D", "Novelty/depth", "Algorithmic information / Bennett logical depth",
++     "zlib-compressed changed logic conditioned on the old file, weighted by branch tokens"),
++    ("F", "Reviewer familiarity", "Conditional description complexity",
++     "time-decayed authorship of touched files and neighboring paths"),
++    ("P", "Interactions", "Parameterized and combinatorial complexity",
++     "import/co-change edges among changed files, charged by smaller endpoint depth"),
++    ("H", "Change entropy", "Shannon entropy",
++     "distribution of depth within connected clusters and cost across clusters"),
++    ("B", "Blast radius", "Graph reachability",
++     "distance-weighted transitively dependent non-test files"),
++    ("T", "Test evidence", "Proof certificates / communication complexity",
++     "changed source files with related changed tests, NOT verified test coverage"),
++    ("R", "Review regime", "Cynefin sense-making framework",
++     "advisory rule-based classification, not a complexity quantity"),
++)
++
++
++def prior_effort(est: Estimate, familiarity: float, p: Params) -> float:
++    """Re-evaluate the existing prior formula from raw cluster signals.
++
++    A parameter-off comparison does not delete evidence from the PR. It asks
++    what the same *heuristic* model scores when one coefficient is set to zero.
++    """
++    costs = [(c.depth + p.beta * c.interaction_ru) * (1 + p.theta * c.entropy)
++             for c in est.clusters]
++    size = sum(costs) + p.shallow_ru * est.shallow_lines
++    if size <= 0:
++        return 0.0
++    return (size * (size / p.ref_size) ** p.eps
++            * (1 + p.theta * entropy(costs))
++            * (1 + p.kappa * math.log2(1 + est.blast))
++            * (1 - p.tau * est.certificates)
++            * (1 + p.alpha * (1 - familiarity)))
++
++
++def complexity_dimensions(an: Analysis, est: Estimate, familiarity: float,
++                          regime: str, reasons: list[str]) -> list[dict]:
++    """Return the 7 measured dimensions without pretending they are proven theory.
++
++    ``prior_delta_ru`` can be negative (e.g. a test co-change discount). It is
++    the full prior score minus the score with ONE coefficient set to zero,
++    holding measured inputs fixed. Nonlinear interactions make deltas nonadditive.
++    """
++    p = an.p
++    full = prior_effort(est, familiarity, p)
++    deltas = {
++        "F": full - prior_effort(est, familiarity, replace(p, alpha=0.0)),
++        "P": full - prior_effort(est, familiarity, replace(p, beta=0.0)),
++        "H": full - prior_effort(est, familiarity, replace(p, theta=0.0)),
++        "B": full - prior_effort(est, familiarity, replace(p, kappa=0.0)),
++        "T": full - prior_effort(est, familiarity, replace(p, tau=0.0)),
++    }
++    values = {
++        "D": {"novelty_depth_ru": sum(c.depth for c in est.clusters),
++              "novel_bytes": sum(s.novel_bytes for s in an.sig.values()),
++              "branch_tokens": sum(s.branches for s in an.sig.values())},
++        "F": {"familiarity": familiarity, "unfamiliarity": 1 - familiarity},
++        "P": {"coupling_edges": sum(c.interactions for c in est.clusters),
++              "edge_depth_ru": sum(c.interaction_ru for c in est.clusters)},
++        "H": {"within_cluster_bits": [c.entropy for c in est.clusters],
++              "across_cluster_bits": est.entropy_across},
++        "B": {"weighted_reach": est.blast, "dependent_files": len(est.blast_files)},
++        "T": {"changed_test_relationship_share": est.certificates,
++              "unmatched_changed_sources": len(est.uncovered)},
++        "R": {"regime": regime, "reasons": reasons},
++    }
++    notes = {
++        "D": "Not Bennett logical depth; novelty/branching cannot isolate verification cost.",
++        "F": "Authorship is not expertise, prior review experience, independence or availability.",
++        "P": "Import and co-change edges miss runtime, data and operational coupling.",
++        "H": "Entropy measures distribution of a heuristic weight, not semantic uncertainty.",
++        "B": "Only dependencies visible to the graph; conditional and runtime calls may be missed.",
++        "T": "Changed tests need not exercise changed behavior; no proof discount is warranted.",
++        "R": "Workflow recommendation; no independent RU effect or verified risk ordering.",
++    }
++    out = []
++    for key, name, theory, proxy in DEFINITIONS:
++        out.append({
++            "id": key, "name": name, "theory_inspiration": theory,
++            "operational_proxy": proxy, "measured": values[key],
++            "measurement_confidence": "unassessed", "empirical_validity": "unvalidated",
++            "prior_delta_ru": deltas.get(key),
++            "limitation": notes[key],
++        })
++    return out
+diff --git a/pyproject.toml b/pyproject.toml
+index 905a499..4c89386 100644
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
+ 
+ [project]
+ name = "prcost"
+-version = "0.2.0"
++version = "0.2.1"
+ description = "Estimate and reduce the review cost of a pull request"
+ requires-python = ">=3.9"
+ dependencies = []
+diff --git a/tests/test_prcost.py b/tests/test_prcost.py
+index 759e341..dd6d3a7 100644
+--- a/tests/test_prcost.py
++++ b/tests/test_prcost.py
+@@ -9,6 +9,7 @@ import unittest
+ 
+ from prcost import calibrate
+ from prcost.cli import _summary, main
++from prcost.dimensions import complexity_dimensions, prior_effort
+ from prcost.describe import reading_order, review_guide
+ from prcost.gitio import parse_diff
+ from prcost.lines import classify_diff
+@@ -298,6 +299,59 @@ class PrcostTest(unittest.TestCase):
+         self.assertIn("Review first:", output.getvalue())
+         self.assertIn("not an assignment", output.getvalue())
+ 
++    def test_seven_complexity_dimensions_preserve_theory_proxy_and_validity(self):
++        est = self.an.whole()
++        regime, reasons = self.an.regime(est, None)
++        dims = complexity_dimensions(self.an, est, 0.25, regime, reasons)
++        self.assertEqual([d["id"] for d in dims], list("DFPHBTR"))
++        for dim in dims:
++            self.assertTrue(dim["theory_inspiration"])
++            self.assertTrue(dim["operational_proxy"])
++            self.assertTrue(dim["measured"])
++            self.assertEqual(dim["measurement_confidence"], "unassessed")
++            self.assertEqual(dim["empirical_validity"], "unvalidated")
++        self.assertIsNone(dims[0]["prior_delta_ru"])
++        self.assertIsNone(dims[-1]["prior_delta_ru"])
++        self.assertLess(dims[5]["prior_delta_ru"], 0)  # tests discount an unvalidated prior
++        self.assertGreater(dims[1]["prior_delta_ru"], 0)  # unfamiliarity penalty
++        self.assertGreater(dims[2]["prior_delta_ru"], 0)  # edge interactions
++        self.assertAlmostEqual(prior_effort(est, 0.25, self.an.p),
++                               est.for_reviewer(0.25, self.an.p), places=6)
++        out = _summary(self.an, None, None)
++        self.assertEqual([d["id"] for d in out["complexity_dimensions"]], list("DFPHBTR"))
++
++    def test_dimension_report_is_visible_in_full_score(self):
++        from contextlib import redirect_stdout
++        from io import StringIO
++        output = StringIO()
++        with redirect_stdout(output):
++            rc = main(["score", "--repo", self.repo, "--base", "main", "--head", "feature"])
++        self.assertEqual(rc, 0)
++        self.assertIn("Seven complexity dimensions", output.getvalue())
++        self.assertIn("not additive", output.getvalue().replace("nonadditive", "not additive"))
++        self.assertIn("Review regime", output.getvalue())
++
++    def test_chronological_dimension_ablation_is_reported(self):
++        import math
++        rows = []
++        for i in range(20):
++            row = {f: math.log1p(i + (j + 1) * (i % (j + 3)) + 1) for j, f in
++                   enumerate(calibrate.EFFORT_FEATURES + calibrate.BASELINE)}
++            rows.append({"merged": i, "row": row, "touches": i % 8 + i / 4,
++                         "minutes": None, "wait_hours": None})
++        model = calibrate._fit_models(rows, False)["effort"]
++        self.assertEqual(set(model["dimension_ablations"]), set("DFPHBT"))
++        self.assertAlmostEqual(model["baseline_cv_spearman"],
++            calibrate.cv_spearman([r["row"] for r in rows],
++                [math.log1p(r["touches"]) for r in rows],
++                calibrate.BASELINE, warmup=max(len(calibrate.EFFORT_FEATURES) + 3,
++                                              len(rows) // 2)))
++        for d in model["dimension_ablations"].values():
++            self.assertIn("delta_spearman", d)
++            self.assertIn("without_cv_spearman", d)
++            self.assertEqual(d["delta_spearman"],
++                             model["cv_spearman"] - d["without_cv_spearman"])
++
+     def test_stats(self):
+         self.assertAlmostEqual(calibrate.spearman([1, 2, 3, 4], [10, 20, 30, 40]), 1.0)
+         X = [[float(i), float(i % 3)] for i in range(40)]
